@@ -1,0 +1,78 @@
+{
+  "name": "NIS 04 - Error Handler",
+  "description": "Error workflow: logs failures to Supabase (secrets redacted) and alerts the allowlisted owner on Telegram.",
+  "active": true,
+  "nodeCount": 5,
+  "settings": { "executionOrder": "v1", "availableInMCP": true },
+  "connections": {
+    "Workflow Error": { "main": [[{ "node": "Get Allowlist", "type": "main", "index": 0 }]] },
+    "Get Allowlist": { "main": [[{ "node": "Build Error Log", "type": "main", "index": 0 }]] },
+    "Build Error Log": { "main": [[{ "node": "Log Error to Supabase", "type": "main", "index": 0 }]] },
+    "Log Error to Supabase": { "main": [[{ "node": "Alert Owner", "type": "main", "index": 0 }]] }
+  },
+  "nodes": [
+    {
+      "name": "Workflow Error",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [0, 0],
+      "parameters": {}
+    },
+    {
+      "name": "Get Allowlist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [224, 0],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_ALLOWLIST_DATA_TABLE_ID" },
+        "matchType": "anyCondition",
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "name": "Build Error Log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, 0],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var e = $('Workflow Error').first().json;\nvar rows = $input.all().map(function (i) { return i.json.telegram_user_id; }).filter(function (x) { return x; });\nvar ex = e.execution || {}; var wf = e.workflow || {}; var er = ex.error || {};\nvar msg = String(er.message || 'unknown error').slice(0, 300);\nvar node = String((er.node && er.node.name) || ex.lastNodeExecuted || '');\nfunction b64(o) { return Buffer.from(JSON.stringify(o), 'utf8').toString('base64'); }\nvar meta = { workflow: wf.name, node: node, execution_id: ex.id };\nvar exid = String(ex.id || 'none').replace(/[^0-9a-zA-Z_-]/g, '');\nvar wn = String(wf.name || 'unknown').replace(/[^0-9a-zA-Z _-]/g, '');\nvar sql = \"select public.nis_log('\" + exid + \"','\" + wn + \"','\" + String(node).replace(/[^0-9a-zA-Z _-]/g, '') + \"','error',convert_from(decode('\" + b64(msg) + \"','base64'),'UTF8'),convert_from(decode('\" + b64(meta) + \"','base64'),'UTF8')::jsonb) as r\";\nvar text = '⚠️ <b>Workflow error</b>' + String.fromCharCode(10) + wn + ' · node: ' + node + String.fromCharCode(10) + msg.replace(/&/g, '&amp;').replace(/</g, '&lt;') + String.fromCharCode(10) + 'Execution ' + exid;\nreturn [{ json: { sql: sql, chat_id: rows.length ? Number(rows[0]) : null, text: text } }];"
+      }
+    },
+    {
+      "name": "Log Error to Supabase",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [672, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.sql }) }}"
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Alert Owner",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [896, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Build Error Log').first().json.chat_id }}",
+        "text": "={{ $('Build Error Log').first().json.text }}",
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML" }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    }
+  ]
+}

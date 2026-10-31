@@ -1,0 +1,455 @@
+{
+  "name": "NIS 02 - Research Orchestrator",
+  "description": "Research orchestrator: Brave discovery, Claude/OpenAI analysis, Supabase persistence, Telegram report",
+  "active": true,
+  "nodeCount": 30,
+  "settings": { "executionOrder": "v1" },
+  "connections": {
+    "Orchestrator Trigger": { "main": [[{ "node": "Prep Start Run", "type": "main", "index": 0 }]] },
+    "Prep Start Run": { "main": [[{ "node": "DB Start Run", "type": "main", "index": 0 }]] },
+    "DB Start Run": { "main": [[{ "node": "Run Started?", "type": "main", "index": 0 }]] },
+    "Run Started?": {
+      "main": [
+        [{ "node": "Send Run Started", "type": "main", "index": 0 }],
+        [{ "node": "Send Run Blocked", "type": "main", "index": 0 }]
+      ]
+    },
+    "Send Run Started": { "main": [[{ "node": "Build Search Queries", "type": "main", "index": 0 }]] },
+    "Build Search Queries": { "main": [[{ "node": "Brave Search", "type": "main", "index": 0 }]] },
+    "Brave Search": { "main": [[{ "node": "Collect Search Results", "type": "main", "index": 0 }]] },
+    "Collect Search Results": { "main": [[{ "node": "DB Stop Check", "type": "main", "index": 0 }]] },
+    "DB Stop Check": { "main": [[{ "node": "Stop Requested?", "type": "main", "index": 0 }]] },
+    "Stop Requested?": {
+      "main": [
+        [{ "node": "DB Finish Stopped", "type": "main", "index": 0 }],
+        [{ "node": "Restore Search Data", "type": "main", "index": 0 }]
+      ]
+    },
+    "DB Finish Stopped": { "main": [[{ "node": "Send Stopped Notice", "type": "main", "index": 0 }]] },
+    "Normalize and Batch": { "main": [[{ "node": "Claude Analyze", "type": "main", "index": 0 }]] },
+    "Claude Analyze": { "main": [[{ "node": "Claude Output OK?", "type": "main", "index": 0 }]] },
+    "Claude Output OK?": {
+      "main": [
+        [{ "node": "Merge AI Outputs", "type": "main", "index": 0 }],
+        [{ "node": "OpenAI Fallback Analyze", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge AI Outputs": { "main": [[{ "node": "Parse Analysis", "type": "main", "index": 0 }]] },
+    "OpenAI Fallback Analyze": { "main": [[{ "node": "Merge AI Outputs", "type": "main", "index": 1 }]] },
+    "Parse Analysis": { "main": [[{ "node": "DB Persist", "type": "main", "index": 0 }]] },
+    "DB Persist": { "main": [[{ "node": "DB Stop Check Final", "type": "main", "index": 0 }]] },
+    "DB Stop Check Final": { "main": [[{ "node": "Compile Report", "type": "main", "index": 0 }]] },
+    "Compile Report": {
+      "main": [
+        [
+          { "node": "DB Finish Run", "type": "main", "index": 0 },
+          { "node": "Route Message Kind", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Route Message Kind": {
+      "main": [
+        [{ "node": "Send Person Card", "type": "main", "index": 0 }],
+        [{ "node": "Send Post Card", "type": "main", "index": 0 }],
+        [{ "node": "Send Report Text", "type": "main", "index": 0 }]
+      ]
+    },
+    "Manual Test Start": { "main": [[{ "node": "Test Input", "type": "main", "index": 0 }]] },
+    "Test Input": { "main": [[{ "node": "Prep Start Run", "type": "main", "index": 0 }]] },
+    "Restore Search Data": { "main": [[{ "node": "Normalize and Batch", "type": "main", "index": 0 }]] }
+  },
+  "nodes": [
+    { "name": "Orchestrator Trigger", "type": "n8n-nodes-base.executeWorkflowTrigger", "typeVersion": 1.1, "position": [0, 192], "parameters": { "inputSource": "passthrough" } },
+    {
+      "name": "Prep Start Run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 192],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var t = $input.first().json;\nvar chat = Number(t.chat_id), user = Number(t.user_id);\nif (!isFinite(chat) || !isFinite(user)) { throw new Error('invalid ids'); }\nvar ex = String($execution.id).replace(/[^0-9a-zA-Z_-]/g, '');\nreturn [{ json: { chat_id: chat, user_id: user, sql: \"select public.nis_start_run('\" + ex + \"',\" + chat + \",\" + user + \") as r\" } }];"
+      }
+    },
+    {
+      "name": "DB Start Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [448, 192],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.sql }) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Run Started?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [672, 192],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [{ "leftValue": "={{ $json.r.ok }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Send Run Started",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [896, 96],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Prep Start Run').first().json.chat_id }}",
+        "text": "🔎 Research started. Searching permitted public sources, then analysing. Send /stop to stop safely.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Send Run Blocked",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [896, 288],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Prep Start Run').first().json.chat_id }}",
+        "text": "={{ \"⚠️ A research run is already in progress (execution \" + ($json.r.running_execution_id || \"unknown\") + \"). Use /status or /stop.\" }}",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Build Search Queries",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 96],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var q = [\n ['site:linkedin.com/in \"Head of AI\" OR \"AI Engineering Manager\" n8n automation hiring','people'],\n ['site:linkedin.com/in \"Technical Recruiter\" \"AI Engineer\" OR \"automation engineer\" remote','people'],\n ['site:linkedin.com/in founder \"AI automation agency\" n8n','people'],\n ['site:linkedin.com/in \"Voice AI\" OR \"AI voice agents\" ElevenLabs OR Retell founder','people'],\n ['site:linkedin.com/in MCP OR RAG engineer \"AI agents\" automation','people'],\n ['site:linkedin.com/in \"AI Solutions Architect\" workflow automation','people'],\n ['site:linkedin.com/in \"Head of Customer Support\" OR \"Director of Customer Support\" AI automation SaaS','people'],\n ['site:linkedin.com/in CTO startup \"AI agents\" automation','people'],\n ['site:linkedin.com/posts n8n AI agent workflow automation','posts'],\n ['site:linkedin.com/posts MCP agentic AI RAG voice agents','posts'],\n ['\"AI automation engineer\" remote job Bangladesh apply','career'],\n ['n8n automation engineer job remote worldwide hiring','career']\n];\nreturn q.map(function(x){ return { json: { query: x[0], intent: x[1] } }; });"
+      }
+    },
+    {
+      "name": "Brave Search",
+      "type": "@brave/n8n-nodes-brave-search.braveSearch",
+      "typeVersion": 1.1,
+      "position": [1344, 96],
+      "parameters": { "operation": "web", "query": "={{ $json.query }}", "count": 10 },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Collect Search Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 96],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var qs = $('Build Search Queries').all();\nvar res = $input.all();\nvar out = []; var errors = 0;\nfor (var i = 0; i < res.length; i++) {\n  var j = res[i].json; var intent = (qs[i] && qs[i].json.intent) || 'unknown';\n  if (j.error || !j.web || !j.web.results) { errors++; continue; }\n  j.web.results.forEach(function (r) { out.push({ url: r.url, title: r.title || '', description: r.description || '', extra: (r.extra_snippets || []).slice(0, 2), intent: intent, age: r.page_age || null }); });\n}\nreturn [{ json: { results: out, searches: res.length, search_errors: errors } }];"
+      }
+    },
+    {
+      "name": "DB Stop Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1792, 96],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"select public.nis_stop_status('\" + $('DB Start Run').first().json.r.report_id + \"'::uuid) as r\" }) }}"
+      },
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Stop Requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2016, 96],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [{ "leftValue": "={{ $json.r.stop }}", "operator": { "type": "boolean", "operation": "true", "singleValue": true } }],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "DB Finish Stopped",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [2240, 0],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"select public.nis_finish_run('\" + $('DB Start Run').first().json.r.report_id + \"'::uuid,'stopped','{}'::jsonb,'Stopped by user before analysis') as r\" }) }}"
+      },
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Normalize and Batch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2240, 192],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var d = $input.first().json;\nvar NL = String.fromCharCode(10);\nfunction norm(u){ var m=/^https?:[/][/]([^/?#]+)([^?#]*)/i.exec(String(u||'')); if(!m) return null; var h=m[1].toLowerCase(); if(h.slice(-12)==='linkedin.com') h='www.linkedin.com'; var p=m[2].replace(/[/]+$/,''); return 'https://'+h+p; }\nvar BAD=['pinterest.','facebook.com','youtube.com','reddit.com','quora.com','twitter.com','x.com/','instagram.com','tiktok.com'];\nvar cap={person:24,post:10,career:10};\nvar seen={}; var cands=[]; var counts={person:0,post:0,career:0,skipped:0,dup:0,found:d.results.length};\nd.results.forEach(function(r){\n  var n=norm(r.url); if(!n){counts.skipped++;return;}\n  if(seen[n]){counts.dup++;return;} seen[n]=1;\n  var host=n.split('/')[2]; var path=n.slice(('https://'+host).length);\n  var bad=false; BAD.forEach(function(b){ if((host+path).indexOf(b)>=0) bad=true; });\n  if(bad){counts.skipped++;return;}\n  var type=null;\n  if(host==='www.linkedin.com'){\n    if(path.indexOf('/in/')===0) type='person';\n    else if(path.indexOf('/posts/')===0||path.indexOf('/pulse/')===0) type='post';\n  } else if(r.intent==='career'){ type='career'; }\n  if(!type){counts.skipped++;return;}\n  if(counts[type]>=cap[type]){counts.skipped++;return;}\n  counts[type]++;\n  cands.push({id:'c'+(cands.length+1),type:type,url:n,title:String(r.title||'').slice(0,200),description:String(r.description||'').slice(0,600),extra:(r.extra||[]).join(' | ').slice(0,500),age:r.age||''});\n});\nvar profile=[\n 'CANDIDATE: Anupom Mojumder, AI Automation Engineer based in Sylhet, Bangladesh (looking for remote/international and Bangladesh roles).',\n 'Verified skills: n8n, Make.com, Zapier, AI agents/agentic AI, Claude, Claude Code, OpenAI, Gemini, MCP, RAG, LangChain, ElevenLabs, Retell AI, Twilio, REST APIs, webhooks, Python, JavaScript, Supabase, PostgreSQL, CRM and lead-generation automation, AI customer support, business process automation.',\n 'Positioning: builds practical AI-powered automation systems that solve real business problems.',\n 'Never invent his experience, projects, employers, results or capabilities beyond the list above.'\n].join(NL);\nvar rules=[\n 'You analyse web-search results (titles/snippets only; you have NOT opened the pages). Use ONLY the supplied text. Never invent names, titles, companies, hiring status or post content. If something is not in the text, put it in unknown_facts or leave it empty.',\n 'For each candidate return one object. kind must equal the candidate type (person, post, career).',\n 'PERSON: name, position, company, category (career_opportunity|industry_leader|potential_client|professional_peer), score_breakdown {relevance 0-25 professional field relevance, career 0-25 career opportunity potential, ai_industry 0-20, business 0-15 business/collaboration potential, content 0-10, activity 0-5}, verified_facts[] (directly stated in the snippet), inferred_facts[], unknown_facts[], confidence (high|medium|low), reason (one concrete sentence), message (personalised LinkedIn connection note, English, max 280 characters, no fake familiarity, no flattery, no sales pitch, mention a specific shared topic from the snippet, first person as Anupom). Score honestly: limited snippet evidence means low activity/content scores. Irrelevant, spam or motivational accounts get low scores.',\n 'POST: author_name, company, topic, main_argument (only what the snippet shows), relevance 0-100, networking_value, suggested_comment and alternative_comment (natural, insightful, professional, 1-3 sentences, no generic praise, no invented personal experience, no self-promotion; base only on the snippet), because only the snippet is available.',\n 'CAREER (job or hiring page): title, company, remote_policy (remote|hybrid|onsite|unknown), bangladesh_eligibility (verified_accepts|verified_excludes|unknown), eligibility_evidence (an EXACT verbatim quote from the supplied text proving it; otherwise empty and eligibility unknown), is_bangladesh_based (true only if the text says Bangladesh/Dhaka etc.), location_text, relevance 0-100 for an AI automation engineer. Never assume global remote means Bangladesh is accepted.',\n 'Output ONLY valid JSON: {\"results\":[{\"id\":\"c1\",\"kind\":\"person\",...}]}. Include every candidate id exactly once. Candidates with no relevance still appear with low scores.'\n].join(NL);\nvar batches=[]; var size=8;\nfor(var i=0;i<cands.length;i+=size){\n  var chunk=cands.slice(i,i+size); var map={};\n  var lines=chunk.map(function(c){ map[c.id]=c; return ['ID: '+c.id,'TYPE: '+c.type,'URL: '+c.url,'TITLE: '+c.title,'SNIPPET: '+c.description,'EXTRA: '+c.extra,'AGE: '+c.age].join(NL); }).join(NL+'---'+NL);\n  batches.push({json:{prompt:profile+NL+NL+rules+NL+NL+'CANDIDATES:'+NL+lines,cands:map,stats:counts,searches:d.searches,search_errors:d.search_errors}});\n}\nif(!batches.length){ batches.push({json:{prompt:'Reply with exactly: {\"results\":[]}',cands:{},stats:counts,searches:d.searches,search_errors:d.search_errors}}); }\nreturn batches;"
+      }
+    },
+    {
+      "name": "Send Stopped Notice",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2528, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Prep Start Run').first().json.chat_id }}",
+        "text": "🛑 Run stopped safely before analysis. No recommendations were generated.",
+        "additionalFields": { "appendAttribution": false }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Claude Analyze",
+      "type": "@n8n/n8n-nodes-langchain.anthropic",
+      "typeVersion": 1,
+      "position": [2464, 192],
+      "parameters": {
+        "resource": "text",
+        "operation": "message",
+        "modelId": { "__rl": true, "mode": "id", "value": "claude-sonnet-5-5" },
+        "messages": { "values": [{ "content": "={{ $json.prompt }}", "role": "user" }] },
+        "simplify": true,
+        "options": { "maxTokens": 8000 }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Claude Output OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2816, 192],
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "loose" },
+          "conditions": [{ "leftValue": "={{ Array.isArray($json.content) && $json.content.some(function(c){ return c.type === 'text' && c.text; }) ? 'ok' : 'fail' }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "ok" }],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Merge AI Outputs",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [3392, 192],
+      "parameters": { "mode": "append" }
+    },
+    {
+      "name": "OpenAI Fallback Analyze",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [3040, 272],
+      "parameters": {
+        "resource": "text",
+        "operation": "response",
+        "modelId": { "__rl": true, "mode": "id", "value": "gpt-5-mini" },
+        "responses": { "values": [{ "type": "text", "role": "user", "content": "={{ $('Normalize and Batch').item.json.prompt }}" }] },
+        "simplify": true,
+        "options": { "maxTokens": 12000, "reasoning": { "reasoningOptions": { "effort": "low", "summary": "none" } } }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "name": "Parse Analysis",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3616, 192],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var batches=$('Normalize and Batch').all();\nvar cmap={};\nbatches.forEach(function(b){ var c=b.json.cands||{}; Object.keys(c).forEach(function(k){ cmap[k]=c[k]; }); });\nvar report_id=$('DB Start Run').first().json.r.report_id;\nvar meta={kind:'meta',sql:'select 1 as r',batches_total:batches.length,batches_parsed:0,providers:[]};\nvar out=[meta];\nfunction txt(j){\n  if(Array.isArray(j.content)){ for(var q=0;q<j.content.length;q++){ if(j.content[q].type==='text'&&j.content[q].text) return {t:j.content[q].text,p:'claude'}; } }\n  if(j.output){ for(var i=0;i<j.output.length;i++){ var o=j.output[i]; if(o.content){ for(var k=0;k<o.content.length;k++){ if(o.content[k].text) return {t:o.content[k].text,p:'openai'}; } } } }\n  return null;\n}\nfunction parse(t){ var a=t.indexOf('{'),b=t.lastIndexOf('}'); if(a<0||b<=a) return null; try{ return JSON.parse(t.slice(a,b+1)); }catch(e){ return null; } }\nfunction b64(o){ return Buffer.from(JSON.stringify(o),'utf8').toString('base64'); }\nfunction clamp(v,m){ v=Number(v); if(!isFinite(v)) v=0; return Math.max(0,Math.min(m,Math.round(v))); }\nfunction str(v,n){ return (v==null?'':String(v)).slice(0,n); }\nfunction arr(v,n,m){ return (Array.isArray(v)?v:[]).slice(0,n).map(function(s){ return str(s,m); }); }\nvar dec=\"convert_from(decode('\";\nvar seenIds={};\n$input.all().forEach(function(it){\n  var x=txt(it.json); if(!x) return;\n  var p=parse(x.t); if(!p||!Array.isArray(p.results)) return;\n  meta.batches_parsed++; if(meta.providers.indexOf(x.p)<0) meta.providers.push(x.p);\n  p.results.forEach(function(r){\n    var c=cmap[r.id]; if(!c||seenIds[r.id]) return; seenIds[r.id]=1;\n    if(r.kind!==c.type) return;\n    if(c.type==='person'){\n      var bd=r.score_breakdown||{};\n      var b={relevance:clamp(bd.relevance,25),career:clamp(bd.career,25),ai_industry:clamp(bd.ai_industry,20),business:clamp(bd.business,15),content:clamp(bd.content,10),activity:clamp(bd.activity,5)};\n      var score=b.relevance+b.career+b.ai_industry+b.business+b.content+b.activity;\n      var name=str(r.name,120).trim(); if(!name) return;\n      var hay0=(c.title+' '+c.description+' '+c.extra).toLowerCase(); var tok=name.toLowerCase().split(' ')[0];\n      if(tok.length<2||hay0.indexOf(tok)<0||name.toLowerCase().indexOf('anupom')>=0) return;\n      var cat=['career_opportunity','industry_leader','potential_client','professional_peer'].indexOf(r.category)>=0?r.category:'unclassified';\n      var msg=str(r.message,290); var vf=arr(r.verified_facts,6,240); var inf=arr(r.inferred_facts,6,240);\n      var person={profile_url:c.url,name:name,position:str(r.position,160),company:str(r.company,160),category:cat,skills:[],verified_facts:{statements:vf},inferred_facts:{statements:inf},unknown_facts:arr(r.unknown_facts,6,200),evidence_urls:[c.url],confidence:['high','medium','low'].indexOf(r.confidence)>=0?r.confidence:'low',relevance_score:score,score_breakdown:b};\n      var payload={person:person,report_id:report_id,score:score,reason:str(r.reason,400),evidence_url:c.url,message:msg};\n      var sql=\"with p as (select \"+dec+b64(payload)+\"','base64'),'UTF8')::jsonb j), u as (select public.nis_upsert_person(p.j->'person') r, p.j j from p) select u.r, case when (u.r->>'eligible')::boolean then public.nis_record_recommendation((u.r->>'id')::uuid,(u.j->>'report_id')::uuid,(u.j->>'score')::int,u.j->>'reason',u.j->>'evidence_url',u.j->>'message') end as rec from u\";\n      out.push({kind:'person',sql:sql,display:{name:name,position:person.position,company:person.company,score:score,category:cat,confidence:person.confidence,reason:payload.reason,url:c.url,message:msg,verified:vf,inferred:inf}});\n    } else if(c.type==='post'){\n      var basis=(c.description||'').length>=40?'snippet':'none';\n      var post={post_url:c.url,author_name:str(r.author_name,120),company:str(r.company,160),topic:str(r.topic,200),main_argument:str(r.main_argument,500),discussion_points:[],content_basis:basis,networking_value:str(r.networking_value,300),relevance_score:clamp(r.relevance,100),suggested_comment:str(r.suggested_comment,600),alternative_comment:str(r.alternative_comment,600),evidence_urls:[c.url]};\n      var pp={post:post,score:post.relevance_score};\n      var sql2=\"with p as (select \"+dec+b64(pp)+\"','base64'),'UTF8')::jsonb j), u as (select public.nis_upsert_post(p.j->'post') r, p.j j from p) select u.r, case when (u.r->>'eligible')::boolean and (u.j->>'score')::int>=70 then public.nis_mark_post_recommended((u.r->>'id')::uuid) end as mk from u\";\n      out.push({kind:'post',sql:sql2,display:{author:post.author_name,company:post.company,topic:post.topic,score:post.relevance_score,url:c.url,comment:post.suggested_comment,alt:post.alternative_comment,basis:basis,value:post.networking_value}});\n    } else if(c.type==='career'){\n      var rel=clamp(r.relevance,100); if(rel<60) return;\n      var ev=str(r.eligibility_evidence,300).trim(); var hay=(c.title+' '+c.description+' '+c.extra).toLowerCase();\n      var el=r.bangladesh_eligibility;\n      if(el==='verified_accepts'||el==='verified_excludes'){ if(!ev||hay.indexOf(ev.toLowerCase())<0){ el='unknown'; ev=''; } } else { el='unknown'; ev=''; }\n      var bdb=r.is_bangladesh_based===true&&/bangladesh|dhaka|chittagong|sylhet/.test(hay);\n      var job={job_url:c.url,title:str(r.title,200),company:str(r.company,160),remote_policy:r.remote_policy,bangladesh_eligibility:el,eligibility_evidence:ev,location_text:str(r.location_text,160),is_bangladesh_based:bdb,relevance_score:rel};\n      out.push({kind:'career',sql:\"select public.nis_upsert_career(\"+dec+b64(job)+\"','base64'),'UTF8')::jsonb) as r\",display:{title:job.title,company:job.company,url:c.url,eligibility:el,evidence:ev,remote:job.remote_policy,bd:bdb,score:rel}});\n    }\n  });\n});\nreturn out.map(function(o){ return {json:o}; });\n"
+      }
+    },
+    {
+      "name": "DB Persist",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [3840, 192],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.sql }) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput",
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "DB Stop Check Final",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4064, 192],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: \"select public.nis_stop_status('\" + $('DB Start Run').first().json.r.report_id + \"'::uuid) as r\" }) }}"
+      },
+      "executeOnce": true,
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Compile Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4288, 192],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "var NL=String.fromCharCode(10);\nvar chat=$('Prep Start Run').first().json.chat_id;\nvar start=$('DB Start Run').first().json.r;\nvar parsed=$('Parse Analysis').all();\nvar persisted=$('DB Persist').all();\nvar sf=$('DB Stop Check Final').first().json;\nvar stopped=!!(sf.r&&sf.r.stop);\nvar nb=$('Normalize and Batch').first().json; var st=nb.stats||{};\nvar meta=parsed[0].json;\nfunction esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }\nfunction tier(s){ return s>=85?'Highly Valuable':(s>=70?'Strong Match':(s>=55?'Moderate':'Not Recommended')); }\nfunction cut(s){ return s.length>3900?s.slice(0,3890)+'...':s; }\nvar people=[],posts=[],careers=[];\nvar uniq=0,newp=0,dup=0,notRec=0,fail=0,postsDisc=0,postsNew=0,comments=0;\nfor(var i=1;i<parsed.length;i++){\n  var p=parsed[i].json; var res=(persisted[i]&&persisted[i].json)||{};\n  if(res.error||!res.r||res.r.ok!==true){ fail++; continue; }\n  var r=res.r; var d=p.display;\n  if(p.kind==='person'){\n    uniq++; if(r.is_new) newp++; else dup++;\n    if(res.rec&&res.rec.ok===true) people.push({id:r.id,d:d}); else notRec++;\n  } else if(p.kind==='post'){\n    postsDisc++; if(r.is_new) postsNew++;\n    if(res.mk&&res.mk.ok===true){ posts.push({id:r.id,d:d}); if(d.comment) comments++; }\n  } else if(p.kind==='career'){ careers.push({id:r.id,d:d}); }\n}\npeople.sort(function(a,b){ return b.d.score-a.d.score; });\nvar status=stopped?'stopped':((meta.batches_parsed<meta.batches_total||(nb.search_errors||0)>0)?'partial':'completed');\nvar vAcc=careers.filter(function(c){ return c.d.eligibility==='verified_accepts'||c.d.bd; });\nvar unv=careers.filter(function(c){ return !(c.d.eligibility==='verified_accepts'||c.d.bd); });\nvar clients=people.filter(function(x){ return x.d.category==='potential_client'; }).length;\nvar sum=[\n '📊 <b>Research report</b> ('+status+')',\n 'Execution: <code>'+esc(start.execution_id)+'</code> · '+new Date().toISOString().slice(0,10),\n 'Sources: Brave Search API ('+(nb.searches||0)+' queries, '+(nb.search_errors||0)+' failed). Apify: not used this run (needs API token). Search results are leads, not verified facts.',\n 'AI: '+(meta.providers.length?meta.providers.join(' + '):'none available')+' ('+meta.batches_parsed+'/'+meta.batches_total+' batches analysed)',\n 'Search hits: '+(st.found||0)+' · duplicates removed: '+(st.dup||0)+' · analysed: '+((st.person||0)+(st.post||0)+(st.career||0)),\n 'Profiles: '+uniq+' unique ('+newp+' new, '+dup+' already known) · recommended (score 70+): '+people.length+' · potential clients: '+clients,\n 'Posts: '+postsDisc+' analysed · recommended: '+posts.length+' · comments generated: '+comments,\n 'Career pages: '+careers.length+' ('+vAcc.length+' Bangladesh-eligible/based, '+unv.length+' eligibility unverified)',\n (fail?'⚠️ '+fail+' items failed to save.':''),\n (people.length+posts.length===0?'No recommendation met the 70+ threshold with sufficient evidence. Nothing was padded.':'')\n].filter(function(x){ return x; }).join(NL);\nvar out=[{kind:'plain',chat_id:chat,text:cut(sum)}];\npeople.forEach(function(x){ var d=x.d;\n  var t=['👤 <b>'+esc(d.name)+'</b>',esc(d.position)+(d.company?' @ '+esc(d.company):''),'Score <b>'+d.score+'</b> ('+tier(d.score)+') · '+esc(d.category)+' · confidence '+esc(d.confidence),'Why: '+esc(d.reason),'Evidence: '+esc(d.url),'','VERIFIED (snippet): '+(d.verified.length?esc(d.verified.join('; ')):'none'),'INFERRED: '+(d.inferred.length?esc(d.inferred.join('; ')):'none'),'','✉️ Suggested message (tap to copy):','<code>'+esc(d.message)+'</code>'].join(NL);\n  out.push({kind:'person',chat_id:chat,id:x.id,url:d.url,text:cut(t)}); });\nposts.forEach(function(x){ var d=x.d;\n  var t=['📝 <b>'+esc(d.author||'Unknown author')+'</b>'+(d.company?' · '+esc(d.company):''),'Topic: '+esc(d.topic),'Relevance '+d.score+' · '+esc(d.value),(d.basis==='snippet'?'⚠️ Based on a search snippet only. Read the full post before commenting.':''),'','💬 Suggested comment (tap to copy):','<code>'+esc(d.comment)+'</code>',(d.alt?'Alternative:'+NL+'<code>'+esc(d.alt)+'</code>':''),'Source: '+esc(d.url)].join(NL);\n  out.push({kind:'post',chat_id:chat,id:x.id,url:d.url,text:cut(t)}); });\nif(careers.length){\n  var ct=['💼 <b>Career opportunities</b>','Verified/Bangladesh-based:'];\n  if(!vAcc.length) ct.push('none');\n  vAcc.forEach(function(c){ ct.push('• '+esc(c.d.title)+' @ '+esc(c.d.company)+' — '+esc(c.d.evidence||'Bangladesh-based')+' '+esc(c.d.url)); });\n  ct.push(NL+'Eligibility UNVERIFIED (check Bangladesh acceptance before applying):');\n  unv.slice(0,8).forEach(function(c){ ct.push('• '+esc(c.d.title)+' @ '+esc(c.d.company)+' ('+esc(c.d.remote)+') '+esc(c.d.url)); });\n  out.push({kind:'plain',chat_id:chat,text:cut(ct.join(NL))});\n}\nvar summary={status:status,searches:nb.searches||0,search_errors:nb.search_errors||0,found:st.found||0,analysed:(st.person||0)+(st.post||0)+(st.career||0),unique_profiles:uniq,new_profiles:newp,known_profiles:dup,recommended_people:people.length,posts_analysed:postsDisc,recommended_posts:posts.length,comments:comments,career_pages:careers.length,providers:meta.providers,save_failures:fail,apify_used:false};\nvar b64=function(o){ return Buffer.from(typeof o==='string'?o:JSON.stringify(o),'utf8').toString('base64'); };\nvar rid=String(start.report_id).replace(/[^0-9a-f-]/g,'');\nvar ex=String(start.execution_id).replace(/[^0-9a-zA-Z_-]/g,'');\nout[0].finish_sql=\"select public.nis_finish_run('\"+rid+\"'::uuid,'\"+status+\"',convert_from(decode('\"+b64(summary)+\"','base64'),'UTF8')::jsonb,convert_from(decode('\"+b64(sum)+\"','base64'),'UTF8')) as r, public.nis_log('\"+ex+\"','NIS 02 Research Orchestrator','Finish','info','run finished: \"+status+\"',convert_from(decode('\"+b64(summary)+\"','base64'),'UTF8')::jsonb)\";\nreturn out.map(function(o){ return {json:o}; });"
+      }
+    },
+    {
+      "name": "DB Finish Run",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [4512, 96],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.finish_sql }) }}"
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "name": "Route Message Kind",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [4512, 288],
+      "parameters": {
+        "rules": {
+          "values": [
+            { "outputKey": "person", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.kind }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "person" }], "combinator": "and" } },
+            { "outputKey": "post", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.kind }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "post" }], "combinator": "and" } }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "plain" }
+      }
+    },
+    {
+      "name": "Send Person Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [4736, 112],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            { "row": { "buttons": [{ "text": "Open Profile", "additionalFields": { "url": "={{ $json.url }}" } }, { "text": "Reviewed", "additionalFields": { "callback_data": "={{ \"p:r:\" + $json.id }}" } }] } },
+            { "row": { "buttons": [{ "text": "Mark Sent", "additionalFields": { "callback_data": "={{ \"p:s:\" + $json.id }}" } }, { "text": "Mark Connected", "additionalFields": { "callback_data": "={{ \"p:c:\" + $json.id }}" } }, { "text": "Skip", "additionalFields": { "callback_data": "={{ \"p:i:\" + $json.id }}" } }] } }
+          ]
+        },
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Send Post Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [4736, 304],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            { "row": { "buttons": [{ "text": "Open Post", "additionalFields": { "url": "={{ $json.url }}" } }, { "text": "Reviewed", "additionalFields": { "callback_data": "={{ \"o:r:\" + $json.id }}" } }] } },
+            { "row": { "buttons": [{ "text": "Mark Commented", "additionalFields": { "callback_data": "={{ \"o:c:\" + $json.id }}" } }, { "text": "Skip", "additionalFields": { "callback_data": "={{ \"o:s:\" + $json.id }}" } }] } }
+          ]
+        },
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Send Report Text",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [4736, 496],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.text }}",
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "onError": "continueRegularOutput",
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    { "name": "Manual Test Start", "type": "n8n-nodes-base.manualTrigger", "typeVersion": 1, "position": [-600, 300], "parameters": {} },
+    {
+      "name": "Test Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [-400, 300],
+      "parameters": {
+        "assignments": { "assignments": [{ "id": "a1", "name": "chat_id", "type": "number", "value": 1 }, { "id": "a2", "name": "user_id", "type": "number", "value": 1 }] },
+        "includeOtherFields": false,
+        "mode": "manual"
+      }
+    },
+    {
+      "name": "Restore Search Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 400],
+      "parameters": { "jsCode": "return [{ json: $('Collect Search Results').first().json }];", "mode": "runOnceForAllItems" }
+    }
+  ]
+}

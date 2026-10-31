@@ -1,0 +1,151 @@
+{
+  "name": "NIS 01 - Telegram Command Router",
+  "description": "Telegram control interface: allowlist auth, commands, button callbacks, /run, /stop. Never performs LinkedIn actions.",
+  "active": true,
+  "nodeCount": 11,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  },
+  "connections": {
+    "Telegram Update": { "main": [[{ "node": "Parse Update", "type": "main", "index": 0 }]] },
+    "Parse Update": { "main": [[{ "node": "Get Allowlist", "type": "main", "index": 0 }]] },
+    "Manual Test Start": { "main": [[{ "node": "Test Update", "type": "main", "index": 0 }]] },
+    "Test Update": { "main": [[{ "node": "Parse Update", "type": "main", "index": 0 }]] },
+    "Get Allowlist": { "main": [[{ "node": "Authorize and Route", "type": "main", "index": 0 }]] },
+    "Authorize and Route": { "main": [[{ "node": "Route Action", "type": "main", "index": 0 }]] },
+    "Route Action": {
+      "main": [
+        [{ "node": "Start Research Orchestrator", "type": "main", "index": 0 }],
+        [{ "node": "DB Query", "type": "main", "index": 0 }],
+        [{ "node": "Format Reply", "type": "main", "index": 0 }]
+      ]
+    },
+    "DB Query": { "main": [[{ "node": "Format Reply", "type": "main", "index": 0 }]] },
+    "Format Reply": { "main": [[{ "node": "Send via Telegram Delivery", "type": "main", "index": 0 }]] }
+  },
+  "nodes": [
+    {
+      "parameters": { "updates": ["message", "callback_query"], "additionalFields": {} },
+      "name": "Telegram Update",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.5,
+      "position": [0, 0],
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "var u = $input.first().json;\nvar m = u.message, cb = u.callback_query;\nvar o = { kind: 'none' };\nif (cb) {\n  var cm = cb.message || {};\n  o = { kind: 'callback', chat_id: cm.chat ? cm.chat.id : null, chat_type: cm.chat ? cm.chat.type : '', user_id: cb.from ? cb.from.id : null, data: String(cb.data || ''), query_id: cb.id };\n} else if (m) {\n  o = { kind: 'message', chat_id: m.chat ? m.chat.id : null, chat_type: m.chat ? m.chat.type : '', user_id: m.from ? m.from.id : null, text: String(m.text || '') };\n}\nreturn [{ json: o }];"
+      },
+      "name": "Parse Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [448, 160]
+    },
+    {
+      "parameters": {},
+      "name": "Manual Test Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 304]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { message: { text: '/status', chat: { id: 111, type: 'private' }, from: { id: 111 } } } }];"
+      },
+      "name": "Test Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [224, 304]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": { "__rl": true, "mode": "id", "value": "YOUR_ALLOWLIST_DATA_TABLE_ID" },
+        "returnAll": true
+      },
+      "name": "Get Allowlist",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [672, 160],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "var NL = String.fromCharCode(10);\nvar p = $('Parse Update').first().json;\nvar allowed = $input.all().map(function (i) { return i.json.telegram_user_id; }).filter(function (x) { return x; }).map(String);\nfunction out(o) { return [{ json: o }]; }\nif (p.kind === 'none' || !p.chat_id || !p.user_id) return out({ action: 'ignore' });\nvar uid = String(p.user_id);\nif (allowed.indexOf(uid) < 0) {\n  if (p.chat_type !== 'private') return out({ action: 'ignore' });\n  if (p.kind === 'callback') return out({ action: 'static', messages: [{ type: 'ack', queryId: p.query_id, text: 'Not authorized' }] });\n  return out({ action: 'static', messages: [{ type: 'text', chatId: p.chat_id, text: '⛔ Not authorized. This is a private bot.' + NL + 'Your Telegram user ID: <code>' + uid + '</code>' + NL + 'The owner must add this ID to the nis_allowed_users data table in n8n.' }] });\n}\nvar base = { chat_id: p.chat_id, user_id: Number(uid) };\nfunction db(cmd, sql) { return out({ action: 'db', cmd: cmd, sql: sql, chat_id: base.chat_id, user_id: base.user_id, query_id: p.query_id || null }); }\nfunction st(text) { return out({ action: 'static', messages: [{ type: 'text', chatId: base.chat_id, text: text }] }); }\nvar HELP = '<b>AI Networking Intelligence</b>' + NL + 'I research and suggest. You do every LinkedIn action manually. Buttons only record what YOU confirm.' + NL + NL + '/run - start research' + NL + '/people - pending people' + NL + '/posts - pending posts' + NL + '/career - career opportunities' + NL + '/clients - potential clients' + NL + '/status - system status' + NL + '/history - confirmed activity' + NL + '/report - latest report' + NL + '/done - confirm completed activities' + NL + '/stop - stop a running research' + NL + '/help - this list';\nif (p.kind === 'callback') {\n  var parts = p.data.split(':');\n  var uuid = parts[2] || '';\n  var ok = uuid.length === 36 && uuid.split('').every(function (ch) { return '0123456789abcdef-'.indexOf(ch) >= 0; });\n  var pm = { r: 'reviewed', reviewed: 'reviewed', s: 'sent', sent: 'sent', c: 'connected', connected: 'connected', i: 'ignore', ignore: 'ignore', f: 'followup', followup: 'followup' };\n  var om = { r: 'reviewed', reviewed: 'reviewed', c: 'commented', commented: 'commented', s: 'skip', skip: 'skip' };\n  var kind = parts[0] === 'p' ? 'person' : (parts[0] === 'o' ? 'post' : null);\n  var act = kind === 'person' ? pm[parts[1]] : (kind === 'post' ? om[parts[1]] : null);\n  if (!ok || !kind || !act) return out({ action: 'static', messages: [{ type: 'ack', queryId: p.query_id, text: 'Unknown button' }] });\n  return db('callback', \"select public.nis_apply_user_action('\" + kind + \"','\" + uuid + \"'::uuid,'\" + act + \"',\" + base.user_id + \") as r\").map(function (x) { x.json.act = act; return x; });\n}\nvar t = p.text.trim();\nif (t.charAt(0) !== '/') return st('Send a command. /help shows the list.');\nvar sp = t.indexOf(' ');\nvar cmd = (sp < 0 ? t : t.slice(0, sp)).slice(1).split('@')[0].toLowerCase();\nif (cmd === 'start' || cmd === 'help') return st(HELP);\nif (cmd === 'run') return out({ action: 'run', chat_id: base.chat_id, user_id: base.user_id });\nif (cmd === 'people') return db('people', \"select public.nis_list_pending_people(8,null) as r\");\nif (cmd === 'posts') return db('posts', \"select public.nis_list_pending_posts(8) as r\");\nif (cmd === 'career') return db('career', \"select jsonb_build_object('jobs',public.nis_list_career(10),'people',public.nis_list_pending_people(6,'career_opportunity')) as r\");\nif (cmd === 'clients') return db('clients', \"select public.nis_list_pending_people(8,'potential_client') as r\");\nif (cmd === 'status') return db('status', \"select public.nis_status() as r\");\nif (cmd === 'history') return db('history', \"select public.nis_history(15) as r\");\nif (cmd === 'report') return db('report', \"select public.nis_latest_report() as r\");\nif (cmd === 'done') return db('done', \"select jsonb_build_object('people',public.nis_list_pending_people(5,null),'posts',public.nis_list_pending_posts(5)) as r\");\nif (cmd === 'stop') return db('stop', \"select public.nis_request_stop() as r\");\nreturn st('Unknown command. /help shows the list.');"
+      },
+      "name": "Authorize and Route",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 160]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.action }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "run" }], "combinator": "and" } },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.action }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "db" }], "combinator": "and" } },
+            { "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2 }, "conditions": [{ "leftValue": "={{ $json.action }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "static" }], "combinator": "and" } }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "ignore" }
+      },
+      "name": "Route Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [1104, 160]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "id", "value": "NIS_02_RESEARCH_ORCHESTRATOR_WORKFLOW_ID" },
+        "workflowInputs": { "mappingMode": "defineBelow", "value": {}, "matchingColumns": [], "schema": [], "attemptToConvertTypes": false, "convertFieldsToString": true },
+        "options": { "waitForSubWorkflow": false }
+      },
+      "name": "Start Research Orchestrator",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [1344, -32]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.supabase.com/v1/projects/YOUR_SUPABASE_PROJECT_REF/database/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "supabaseOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ query: $json.sql }) }}",
+        "options": {}
+      },
+      "name": "DB Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [1344, 160],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput",
+      "credentials": { "supabaseOAuth2Api": { "name": "Supabase account" } }
+    },
+    {
+      "parameters": {
+        "jsCode": "var NL = String.fromCharCode(10);\nvar ctx = $('Authorize and Route').first().json;\nif (ctx.action === 'static') return ctx.messages.map(function (m) { return { json: m }; });\nvar first = $input.first().json;\nvar c = ctx.chat_id;\nfunction esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }\nfunction cut(s) { return s.length > 3900 ? s.slice(0, 3890) + '...' : s; }\nfunction tier(s) { return s >= 85 ? 'Highly Valuable' : (s >= 70 ? 'Strong Match' : (s >= 55 ? 'Moderate' : 'Not Recommended')); }\nfunction txt(t) { return { json: { type: 'text', chatId: c, text: cut(t) } }; }\nif (first.r === undefined || first.error) return [txt('⚠️ Database request failed. Try again in a moment. If it keeps failing use /status.')];\nvar r = first.r; var out = [];\nfunction person(x) {\n  var t = ['👤 <b>' + esc(x.name) + '</b>', esc(x.position) + (x.company ? ' @ ' + esc(x.company) : ''), 'Score <b>' + x.score + '</b> (' + tier(x.score) + ') · ' + esc(x.category) + ' · confidence ' + esc(x.confidence) + ' · status ' + esc(x.status), 'Why: ' + esc(x.reason || 'n/a'), 'Evidence: ' + esc(x.evidence_url || x.profile_url), '', '✉️ Suggested message (tap to copy):', '<code>' + esc(x.connection_message || '') + '</code>'].join(NL);\n  return { json: { type: 'person', chatId: c, id: x.id, url: x.profile_url, text: cut(t) } };\n}\nfunction post(x) {\n  var t = ['📝 <b>' + esc(x.author_name || 'Unknown author') + '</b>' + (x.company ? ' · ' + esc(x.company) : ''), 'Topic: ' + esc(x.topic), 'Relevance ' + x.relevance_score + ' · ' + esc(x.networking_value || ''), (x.content_basis !== 'full' ? '⚠️ Based on a search snippet only. Read the full post before commenting.' : ''), '', '💬 Suggested comment (tap to copy):', '<code>' + esc(x.suggested_comment || '') + '</code>', (x.alternative_comment ? 'Alternative:' + NL + '<code>' + esc(x.alternative_comment) + '</code>' : ''), 'Source: ' + esc(x.post_url)].join(NL);\n  return { json: { type: 'post', chatId: c, id: x.id, url: x.post_url, text: cut(t) } };\n}\nvar cmd = ctx.cmd;\nif (cmd === 'people' || cmd === 'clients') {\n  if (!r.length) return [txt(cmd === 'people' ? 'No pending people recommendations. Send /run to research.' : 'No pending potential-client recommendations.')];\n  return r.map(person);\n}\nif (cmd === 'posts') {\n  if (!r.length) return [txt('No pending post recommendations. Send /run to research.')];\n  return r.map(post);\n}\nif (cmd === 'career') {\n  var jobs = r.jobs || []; var ver = jobs.filter(function (j) { return j.bangladesh_eligibility === 'verified_accepts' || j.is_bangladesh_based; });\n  var unv = jobs.filter(function (j) { return !(j.bangladesh_eligibility === 'verified_accepts' || j.is_bangladesh_based); });\n  var lines = ['💼 <b>Career opportunities</b>', 'Verified (accepts Bangladesh or Bangladesh-based):'];\n  if (!ver.length) lines.push('none');\n  ver.forEach(function (j) { lines.push('• ' + esc(j.title) + ' @ ' + esc(j.company) + ' — ' + esc(j.eligibility_evidence || 'Bangladesh-based') + ' ' + esc(j.job_url)); });\n  lines.push(NL + 'Eligibility UNVERIFIED (check before applying):');\n  if (!unv.length) lines.push('none');\n  unv.forEach(function (j) { lines.push('• ' + esc(j.title) + ' @ ' + esc(j.company) + ' (' + esc(j.remote_policy) + ') ' + esc(j.job_url)); });\n  out.push(txt(lines.join(NL)));\n  (r.people || []).forEach(function (x) { out.push(person(x)); });\n  return out;\n}\nif (cmd === 'done') {\n  out.push(txt('✅ <b>Confirm completed activities</b>' + NL + 'Tap a button ONLY for things you already did manually on LinkedIn. Nothing is assumed.'));\n  (r.people || []).forEach(function (x) { out.push(person(x)); });\n  (r.posts || []).forEach(function (x) { out.push(post(x)); });\n  if (!(r.people || []).length && !(r.posts || []).length) out.push(txt('Nothing pending.'));\n  return out;\n}\nif (cmd === 'status') {\n  var lr = r.latest_run || {};\n  return [txt(['📡 <b>Status</b>', 'Running now: ' + (r.is_running ? 'yes' : 'no'), 'Last run: ' + esc(lr.execution_id || 'none') + ' (' + esc(lr.status || '-') + ') ' + esc(lr.started_at || ''), 'People tracked: ' + r.people_total + ' · pending: ' + r.people_pending, 'Posts pending: ' + r.posts_pending, 'Confirmed activities: ' + r.activities_total, 'Errors (24h): ' + r.recent_errors_24h].join(NL))];\n}\nif (cmd === 'history') {\n  if (!r.length) return [txt('No confirmed activity yet. Activity is recorded only when you press a Mark button.')];\n  return [txt('🕘 <b>History</b>' + NL + r.map(function (h) { return esc(String(h.occurred_at).slice(0, 10)) + ' · ' + esc(h.activity_type) + ' · ' + esc(h.person_name || h.post_author || '') + (h.company ? ' (' + esc(h.company) + ')' : ''); }).join(NL))];\n}\nif (cmd === 'report') {\n  if (!r.report_text) return [txt('No report yet. Send /run.')];\n  return [txt(r.report_text)];\n}\nif (cmd === 'stop') {\n  return [txt(r.running_runs_flagged > 0 ? '🛑 Stop requested. The run will stop at its next safe checkpoint.' : 'No research is running.')];\n}\nif (cmd === 'callback') {\n  var labels = { reviewed: 'Marked reviewed', sent: 'Marked: connection request sent', connected: 'Marked connected', ignore: 'Skipped', followup: 'Follow-up needed', commented: 'Marked commented', skip: 'Skipped' };\n  var msg = r.ok ? ('✅ ' + (labels[ctx.act] || 'Saved')) : ('⚠️ Not changed: ' + (r.error === 'invalid_transition' ? 'already ' + r.current : r.error));\n  return [{ json: { type: 'ack', queryId: ctx.query_id, text: msg } }];\n}\nreturn [txt('Done.')];"
+      },
+      "name": "Format Reply",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1568, 208]
+    },
+    {
+      "parameters": {
+        "workflowId": { "__rl": true, "mode": "id", "value": "NIS_03_TELEGRAM_DELIVERY_WORKFLOW_ID" },
+        "options": { "waitForSubWorkflow": true }
+      },
+      "name": "Send via Telegram Delivery",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [1792, 208],
+      "onError": "continueRegularOutput"
+    }
+  ]
+}

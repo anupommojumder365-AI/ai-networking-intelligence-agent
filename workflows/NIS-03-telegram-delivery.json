@@ -1,0 +1,115 @@
+{
+  "name": "NIS 03 - Telegram Delivery",
+  "active": true,
+  "nodeCount": 6,
+  "settings": { "executionOrder": "v1", "availableInMCP": true },
+  "connections": {
+    "Delivery Input": { "main": [[{ "node": "Route Message Type", "type": "main", "index": 0 }]] },
+    "Route Message Type": {
+      "main": [
+        [{ "node": "Send Text", "type": "main", "index": 0 }],
+        [{ "node": "Send Person Card", "type": "main", "index": 0 }],
+        [{ "node": "Send Post Card", "type": "main", "index": 0 }],
+        [{ "node": "Answer Button Press", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "name": "Delivery Input",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [0, 288],
+      "parameters": { "inputSource": "passthrough" }
+    },
+    {
+      "name": "Route Message Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [224, 240],
+      "parameters": {
+        "rules": {
+          "values": [
+            { "outputKey": "text", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.type }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "text" }], "combinator": "and" } },
+            { "outputKey": "person", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.type }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "person" }], "combinator": "and" } },
+            { "outputKey": "post", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.type }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "post" }], "combinator": "and" } },
+            { "outputKey": "ack", "conditions": { "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" }, "conditions": [{ "leftValue": "={{ $json.type }}", "operator": { "type": "string", "operation": "equals" }, "rightValue": "ack" }], "combinator": "and" } }
+          ]
+        },
+        "options": { "fallbackOutput": "extra", "renameFallbackOutput": "Ignored" }
+      }
+    },
+    {
+      "name": "Send Text",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [448, 0],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "none",
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Send Person Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [448, 192],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            { "row": { "buttons": [{ "text": "Open Profile", "additionalFields": { "url": "={{ $json.url }}" } }] } },
+            { "row": { "buttons": [{ "text": "Mark Sent", "additionalFields": { "callback_data": "=p:sent:{{ $json.id }}" } }, { "text": "Mark Connected", "additionalFields": { "callback_data": "=p:connected:{{ $json.id }}" } }] } },
+            { "row": { "buttons": [{ "text": "Reviewed", "additionalFields": { "callback_data": "=p:reviewed:{{ $json.id }}" } }, { "text": "Skip", "additionalFields": { "callback_data": "=p:ignore:{{ $json.id }}" } }] } }
+          ]
+        },
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Send Post Card",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [448, 384],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chatId }}",
+        "text": "={{ $json.text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            { "row": { "buttons": [{ "text": "Open Post", "additionalFields": { "url": "={{ $json.url }}" } }] } },
+            { "row": { "buttons": [{ "text": "Mark Commented", "additionalFields": { "callback_data": "=o:commented:{{ $json.id }}" } }, { "text": "Reviewed", "additionalFields": { "callback_data": "=o:reviewed:{{ $json.id }}" } }] } },
+            { "row": { "buttons": [{ "text": "Skip", "additionalFields": { "callback_data": "=o:skip:{{ $json.id }}" } }] } }
+          ]
+        },
+        "additionalFields": { "appendAttribution": false, "parse_mode": "HTML", "disable_web_page_preview": true }
+      },
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    },
+    {
+      "name": "Answer Button Press",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [448, 576],
+      "parameters": {
+        "resource": "callback",
+        "operation": "answerQuery",
+        "queryId": "={{ $json.queryId }}",
+        "additionalFields": { "text": "={{ $json.text }}" }
+      },
+      "credentials": { "telegramApi": { "name": "Telegram account" } }
+    }
+  ]
+}
