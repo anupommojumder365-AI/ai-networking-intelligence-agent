@@ -55,4 +55,4 @@ To run this system yourself, you will need:
 
 ## Status
 
-Active development project — built and maintained by [Anupom Mojumder](https://www.linkedin.com/in/anupommojumder), AI Automation Engineer.
+Active development project — built and maintained by Anupom Mojumder, AI Automation Engineer.
