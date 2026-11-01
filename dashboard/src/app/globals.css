@@ -1,0 +1,32 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+
+html, body { height: 100%; }
+
+body {
+  background-color: #05070f;
+  background-image:
+    radial-gradient(900px 420px at 85% -10%, rgba(109, 139, 255, 0.10), transparent 60%),
+    radial-gradient(700px 380px at 0% 0%, rgba(139, 92, 246, 0.07), transparent 60%);
+  background-attachment: fixed;
+  color: #dfe4f5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: rgba(109, 139, 255, 0.35); }
+
+* { scrollbar-width: thin; scrollbar-color: #283250 transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { background: #283250; border-radius: 8px; }
+
+@layer components {
+  .card { @apply rounded-xl border border-line bg-ink-850/80 backdrop-blur-sm; }
+  .btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg border border-line-strong bg-ink-800 px-3 py-1.5 text-[13px] font-medium text-slate-200 transition hover:border-accent/60 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40; }
+  .btn-primary { @apply border-transparent bg-gradient-to-r from-accent to-accent-violet text-white hover:brightness-110 hover:border-transparent hover:bg-transparent; }
+  .btn-danger { @apply border-red-500/40 bg-red-500/10 text-red-200 hover:border-red-400 hover:bg-red-500/20; }
+  .input { @apply w-full rounded-lg border border-line-strong bg-ink-900 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500 outline-none transition focus:border-accent/70 focus:ring-2 focus:ring-accent/20; }
+  .label { @apply text-[11px] font-medium uppercase tracking-wider text-slate-500; }
+}
